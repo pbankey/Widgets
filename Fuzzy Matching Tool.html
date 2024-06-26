@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fancy Company Fuzzy-Lookup Thingy</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            line-height: 1.6; 
+            margin: 0; 
+            padding: 20px; 
+            background-color: #FFFFFF;
+            color: #000000;
+        }
+        .container { 
+            max-width: 1200px; 
+            margin: 0 auto; 
+        }
+        h1 { 
+            text-align: center; 
+            color: #1062fb;
+        }
+        .subtitle {
+            text-align: center;
+            font-size: 0.9em;
+            margin-top: -10px;
+            margin-bottom: 20px;
+            color: #002570;
+        }
+        .grid { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 20px; 
+        }
+        @media (max-width: 768px) { 
+            .grid { 
+                grid-template-columns: 1fr; 
+            } 
+        }
+        .input-section { 
+            border: 1px solid #64d3ff; 
+            border-radius: 5px; 
+            padding: 15px; 
+        }
+        textarea { 
+            width: 100%; 
+            height: 150px; 
+            margin-bottom: 10px; 
+            border: 1px solid #64d3ff;
+        }
+        button { 
+            background-color: #1062fb; 
+            border: none; 
+            color: #FFFFFF; 
+            padding: 10px 20px; 
+            cursor: pointer; 
+            border-radius: 5px; 
+        }
+        button:disabled { 
+            background-color: #64d3ff; 
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin-top: 20px; 
+        }
+        th, td { 
+            border: 1px solid #64d3ff; 
+            padding: 8px; 
+            text-align: left; 
+        }
+        th { 
+            background-color: #1062fb; 
+            color: #FFFFFF;
+        }
+        select { 
+            margin: 5px 0; 
+            padding: 5px; 
+            border: 1px solid #64d3ff;
+        }
+        .column-label {
+            font-weight: bold;
+            margin-top: 10px;
+            color: #002570;
+        }
+        .preview-message {
+            font-style: italic;
+            color: #002570;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Fancy Company Fuzzy-Lookup Thingy</h1>
+        <p class="subtitle">Built by Philip Bankey. Reach out for any questions!</p>
+        
+        <div class="grid">
+            <div class="input-section">
+                <h2>Master List</h2>
+                <textarea id="masterList" placeholder="Enter values (one per line) or Company|Website"></textarea>
+                <input type="file" id="masterFile" accept=".csv">
+                <div class="column-label">Select Name Column</div>
+                <select id="masterCsvColumn"><option value="">Select Name Column</option></select>
+                <div class="column-label">Select Website Column (Optional)</div>
+                <select id="masterWebsiteColumn"><option value="">Select Website Column (Optional)</option></select>
+            </div>
+            
+            <div class="input-section">
+                <h2>List to Check/Compare</h2>
+                <textarea id="listToCompare" placeholder="Enter values (one per line) or Company|Website"></textarea>
+                <input type="file" id="compareFile" accept=".csv">
+                <div class="column-label">Select Name Column</div>
+                <select id="compareCsvColumn"><option value="">Select Name Column</option></select>
+                <div class="column-label">Select Website Column (Optional)</div>
+                <select id="compareWebsiteColumn"><option value="">Select Website Column (Optional)</option></select>
+            </div>
+        </div>
+        
+        <button id="initiateMatching" disabled>Initiate Matching</button>
+        <button id="downloadCSV" style="display: none;">Download Results CSV</button>
+        
+        <div id="resultsTable"></div>
+    </div>
+
+    <script>
+        let masterCsvData = [], compareCsvData = [], masterCsvHeaders = [], compareCsvHeaders = [];
+        let results = [];
+
+        function handleFileUpload(event, isMaster) {
+            console.log('File upload started', isMaster ? 'master' : 'compare');
+            const file = event.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                const rows = text.split('\n').map(row => row.split(',').map(cell => cell.trim()));
+                const headers = rows[0];
+                if (isMaster) {
+                    masterCsvHeaders = headers;
+                    masterCsvData = rows.slice(1);
+                    populateSelect('masterCsvColumn', headers);
+                    populateSelect('masterWebsiteColumn', headers);
+                } else {
+                    compareCsvHeaders = headers;
+                    compareCsvData = rows.slice(1);
+                    populateSelect('compareCsvColumn', headers);
+                    populateSelect('compareWebsiteColumn', headers);
+                }
+                updateInitiateButton();
+                console.log('File processed', isMaster ? 'master' : 'compare');
+            };
+            reader.readAsText(file);
+        }
+
+        function populateSelect(id, options) {
+            console.log('Populating select', id, options);
+            const select = document.getElementById(id);
+            select.innerHTML = '<option value="">Select Column</option>';
+            options.forEach((option, index) => {
+                const el = document.createElement('option');
+                el.textContent = option;
+                el.value = option;
+                select.appendChild(el);
+            });
+            if (id.includes('CsvColumn')) {
+                select.value = options[0]; // Set default to first column
+            }
+        }
+
+        function normalizeCompanyName(name) {
+            if (typeof name !== 'string' || name.trim() === '') return '';
+            return name.toLowerCase().replace(/[^\w\s-]/g, '').trim();
+        }
+
+        function calculateSimilarity(str1, str2) {
+            const norm1 = normalizeCompanyName(str1);
+            const norm2 = normalizeCompanyName(str2);
+            if (norm1 === '' || norm2 === '') return 0;
+            const maxLength = Math.max(norm1.length, norm2.length);
+            if (maxLength === 0) return 1;
+            const distance = levenshteinDistance(norm1, norm2);
+            return 1 - distance / maxLength;
+        }
+
+        function levenshteinDistance(s1, s2) {
+            const costs = [];
+            for (let i = 0; i <= s1.length; i++) {
+                let lastValue = i;
+                for (let j = 0; j <= s2.length; j++) {
+                    if (i === 0) costs[j] = j;
+                    else {
+                        if (j > 0) {
+                            let newValue = costs[j - 1];
+                            if (s1.charAt(i - 1) !== s2.charAt(j - 1))
+                                newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+                            costs[j - 1] = lastValue;
+                            lastValue = newValue;
+                        }
+                    }
+                }
+                if (i > 0) costs[s2.length] = lastValue;
+            }
+            return costs[s2.length];
+        }
+
+        function getMatchLikeliness(confidenceScore) {
+            if (confidenceScore >= 0.8) return 'High';
+            if (confidenceScore >= 0.6) return 'Medium';
+            if (confidenceScore >= 0.4) return 'Low';
+            return 'None';
+        }
+
+        function handleMatching() {
+            console.log('Matching started');
+            let masterData = processData(true);
+            let compareData = processData(false);
+
+            if (masterData.length === 0 || compareData.length === 0) {
+                alert("Please ensure both Master List and List to Check/Compare have data.");
+                return;
+            }
+
+            results = compareData.map(compareItem => {
+                const bestMatch = masterData.reduce((best, masterItem) => {
+                    const similarity = calculateSimilarity(masterItem.name, compareItem.name);
+                    return similarity > best.similarity ? { item: masterItem, similarity } : best;
+                }, { item: null, similarity: 0 });
+
+                const confidenceScore = bestMatch.similarity;
+                const matchLikeliness = getMatchLikeliness(confidenceScore);
+
+                return {
+                    searchedName: compareItem.name,
+                    confidenceScore: (confidenceScore * 100).toFixed(2) + '%',
+                    matchLikeliness: matchLikeliness,
+                    matchedName: bestMatch.item ? bestMatch.item.name : '',
+                    masterOriginal: bestMatch.item ? bestMatch.item.original : [],
+                    compareOriginal: compareItem.original
+                };
+            });
+
+            displayResults(results);
+            console.log('Matching completed');
+        }
+
+        function processData(isMaster) {
+            const fileInput = document.getElementById(isMaster ? 'masterFile' : 'compareFile');
+            const textarea = document.getElementById(isMaster ? 'masterList' : 'listToCompare');
+            const csvColumn = document.getElementById(isMaster ? 'masterCsvColumn' : 'compareCsvColumn').value;
+
+            if (fileInput.files.length > 0 && csvColumn) {
+                const csvData = isMaster ? masterCsvData : compareCsvData;
+                const headers = isMaster ? masterCsvHeaders : compareCsvHeaders;
+                const nameIndex = headers.indexOf(csvColumn);
+                return csvData.map(row => ({
+                    name: row[nameIndex] || '',
+                    original: row
+                }));
+            } else {
+                return textarea.value.split('\n')
+                    .filter(item => item.trim() !== '')
+                    .map(item => ({
+                        name: item.split('|')[0].trim(),
+                        original: [item]
+                    }));
+            }
+        }
+
+        function displayResults(results) {
+            console.log('Displaying results');
+            const resultsDiv = document.getElementById('resultsTable');
+            resultsDiv.innerHTML = '<p class="preview-message">Showing preview. Full original field list available in CSV download.</p>';
+            
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const tbody = document.createElement('tbody');
+
+            const headers = [
+                'Searched Name', 'Confidence Score', 'Match Likeliness', 'Matched Name'
+            ];
+
+            thead.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
+            table.appendChild(thead);
+
+            results.forEach(result => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${result.searchedName}</td>
+                    <td>${result.confidenceScore}</td>
+                    <td>${result.matchLikeliness}</td>
+                    <td>${result.matchedName}</td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            table.appendChild(tbody);
+            resultsDiv.appendChild(table);
+            document.getElementById('downloadCSV').style.display = 'inline-block';
+        }
+
+        function downloadCSV() {
+            console.log('Downloading CSV');
+            let csv = [];
+
+            // Add headers
+            let headers = ['Searched Name', 'Confidence Score', 'Match Likeliness', 'Matched Name'];
+            headers = headers.concat(compareCsvHeaders.map(h => 'Searched - ' + h));
+            headers = headers.concat(masterCsvHeaders.map(h => 'Master - ' + h));
+            csv.push(headers.join(','));
+
+            // Add data rows
+            results.forEach(result => {
+                let row = [
+                    result.searchedName,
+                    result.confidenceScore,
+                    result.matchLikeliness,
+                    result.matchedName
+                ];
+
+                // Add original data if match is Low or higher
+                if (['Low', 'Medium', 'High'].includes(result.matchLikeliness)) {
+                    row = row.concat(result.compareOriginal);
+                    row = row.concat(result.masterOriginal);
+                } else {
+                    // Add empty cells for original data columns
+                    row = row.concat(new Array(compareCsvHeaders.length + masterCsvHeaders.length).fill(''));
+                }
+
+                // Escape commas and newlines, but don't add quotes unless necessary
+                row = row.map(cell => {
+                    if (cell === undefined || cell === null) return '';
+                    cell = cell.toString();
+                    if (cell.includes(',') || cell.includes('\n')) {
+                        return '"' + cell.replace(/"/g, '""') + '"';
+                    }
+                    return cell;
+                });
+
+                csv.push(row.join(','));
+            });
+
+            const csvContent = csv.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            if (link.download !== undefined) {
+                const url = URL.createObjectURL(blob);
+                link.setAttribute('href', url);
+                link.setAttribute('download', 'fuzzy_comparison_results.csv');
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+
+        function updateInitiateButton() {
+            const masterData = document.getElementById('masterFile').files.length > 0 || document.getElementById('masterList').value.trim() !== '';
+            const compareData = document.getElementById('compareFile').files.length > 0 || document.getElementById('listToCompare').value.trim() !== '';
+            document.getElementById('initiateMatching').disabled = !(masterData && compareData);
+        }
+
+        document.getElementById('masterFile').addEventListener('change', (e) => handleFileUpload(e, true));
+        document.getElementById('compareFile').addEventListener('change', (e) => handleFileUpload(e, false));
+        document.getElementById('masterList').addEventListener('input', updateInitiateButton);
+        document.getElementById('listToCompare').addEventListener('input', updateInitiateButton);
+        document.getElementById('initiateMatching').addEventListener('click', handleMatching);
+        document.getElementById('downloadCSV').addEventListener('click', downloadCSV);
+
+        console.log('Script initialized');
+    </script>
+</body>
+</html>
